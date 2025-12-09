@@ -1,142 +1,110 @@
-import { getSalesData } from '../utils/dataLoader.js';
+import { getDB } from '../config/database.js';
 
-export const searchAndFilterSales = (query) => {
-  let data = [...getSalesData()];
-
+export const searchAndFilterSales = async (query) => {
+  const db = getDB();
+  const collection = db.collection('sales');
+  
+  const filter = {};
+  
   if (query.search) {
-    const searchTerm = query.search.toLowerCase().trim();
-    data = data.filter(item => 
-      item.customerName?.toLowerCase().includes(searchTerm) ||
-      item.phoneNumber?.toLowerCase().includes(searchTerm)
-    );
+    filter.$or = [
+      { customerName: { $regex: query.search, $options: 'i' } },
+      { phoneNumber: { $regex: query.search, $options: 'i' } }
+    ];
   }
-
-  if (query.regions && query.regions.length > 0) {
+  
+  if (query.regions?.length > 0) {
     const regions = Array.isArray(query.regions) ? query.regions : [query.regions];
-    data = data.filter(item => regions.includes(item.customerRegion));
+    filter.customerRegion = { $in: regions };
   }
-
-  if (query.genders && query.genders.length > 0) {
+  
+  if (query.genders?.length > 0) {
     const genders = Array.isArray(query.genders) ? query.genders : [query.genders];
-    data = data.filter(item => genders.includes(item.gender));
+    filter.gender = { $in: genders };
   }
-
-  if (query.categories && query.categories.length > 0) {
+  
+  if (query.categories?.length > 0) {
     const categories = Array.isArray(query.categories) ? query.categories : [query.categories];
-    data = data.filter(item => categories.includes(item.productCategory));
+    filter.productCategory = { $in: categories };
   }
-
-  if (query.paymentMethods && query.paymentMethods.length > 0) {
+  
+  if (query.paymentMethods?.length > 0) {
     const methods = Array.isArray(query.paymentMethods) ? query.paymentMethods : [query.paymentMethods];
-    data = data.filter(item => methods.includes(item.paymentMethod));
+    filter.paymentMethod = { $in: methods };
   }
-
-  if (query.tags && query.tags.length > 0) {
+  
+  if (query.tags?.length > 0) {
     const tags = Array.isArray(query.tags) ? query.tags : [query.tags];
-    data = data.filter(item => {
-      const itemTags = item.tags?.split(',').map(t => t.trim()) || [];
-      return tags.some(tag => itemTags.includes(tag));
-    });
+    filter.tags = { $in: tags };
   }
-
-  // Age Range Filter
+  
   if (query.minAge || query.maxAge) {
-    const minAge = parseInt(query.minAge) || 0;
-    const maxAge = parseInt(query.maxAge) || 999;
-    data = data.filter(item => item.age >= minAge && item.age <= maxAge);
+    filter.age = {};
+    if (query.minAge) filter.age.$gte = parseInt(query.minAge);
+    if (query.maxAge) filter.age.$lte = parseInt(query.maxAge);
   }
-
-  // Date Range Filter
+  
   if (query.startDate || query.endDate) {
-    data = data.filter(item => {
-      const itemDate = new Date(item.date);
-      const start = query.startDate ? new Date(query.startDate) : new Date('1900-01-01');
-      const end = query.endDate ? new Date(query.endDate) : new Date('2100-12-31');
-      return itemDate >= start && itemDate <= end;
-    });
+    filter.date = {};
+    if (query.startDate) filter.date.$gte = new Date(query.startDate);
+    if (query.endDate) filter.date.$lte = new Date(query.endDate);
   }
-
-  // SORTING Implementation
-  if (query.sortBy) {
-    data = data.sort((a, b) => {
-      switch (query.sortBy) {
-        case 'date-desc':
-          return new Date(b.date) - new Date(a.date);
-        case 'date-asc':
-          return new Date(a.date) - new Date(b.date);
-        case 'quantity-desc':
-          return b.quantity - a.quantity;
-        case 'quantity-asc':
-          return a.quantity - b.quantity;
-        case 'name-asc':
-          return (a.customerName || '').localeCompare(b.customerName || '');
-        case 'name-desc':
-          return (b.customerName || '').localeCompare(a.customerName || '');
-        default:
-          return 0;
-      }
-    });
+  
+  const sort = {};
+  switch (query.sortBy) {
+    case 'date-desc': sort.date = -1; break;
+    case 'date-asc': sort.date = 1; break;
+    case 'quantity-desc': sort.quantity = -1; break;
+    case 'quantity-asc': sort.quantity = 1; break;
+    case 'name-asc': sort.customerName = 1; break;
+    case 'name-desc': sort.customerName = -1; break;
+    default: sort.date = -1;
   }
-
-  // PAGINATION Implementation
+  
   const page = parseInt(query.page) || 1;
   const limit = 10;
-  const startIndex = (page - 1) * limit;
-  const endIndex = startIndex + limit;
-
-  const paginatedData = data.slice(startIndex, endIndex);
-
+  const skip = (page - 1) * limit;
+  
+  const totalRecords = await collection.countDocuments(filter);
+  const data = await collection.find(filter).sort(sort).skip(skip).limit(limit).toArray();
+  
   return {
-    data: paginatedData,
+    data,
     pagination: {
       currentPage: page,
-      totalPages: Math.ceil(data.length / limit),
-      totalRecords: data.length,
+      totalPages: Math.ceil(totalRecords / limit),
+      totalRecords,
       recordsPerPage: limit,
-      hasNext: endIndex < data.length,
+      hasNext: skip + limit < totalRecords,
       hasPrevious: page > 1
     }
   };
 };
 
-export const getFilterOptions = () => {
-  const data = getSalesData();
+export const getFilterOptions = async () => {
+  const db = getDB();
+  const collection = db.collection('sales');
   
-  const regions = new Set();
-  const genders = new Set();
-  const categories = new Set();
-  const paymentMethods = new Set();
-  const tags = new Set();
-  let minAge = Infinity;
-  let maxAge = -Infinity;
-
-  for (const item of data) {
-    if (item.customerRegion) regions.add(item.customerRegion);
-    if (item.gender) genders.add(item.gender);
-    if (item.productCategory) categories.add(item.productCategory);
-    if (item.paymentMethod) paymentMethods.add(item.paymentMethod);
-    
-    if (item.tags) {
-      const itemTags = item.tags.split(',').map(t => t.trim());
-      itemTags.forEach(tag => tags.add(tag));
-    }
-    
-    
-    if (item.age && item.age > 0) {
-      if (item.age < minAge) minAge = item.age;
-      if (item.age > maxAge) maxAge = item.age;
-    }
-  }
-
+  const [regions, genders, categories, paymentMethods, tags, ageRange] = await Promise.all([
+    collection.distinct('customerRegion'),
+    collection.distinct('gender'),
+    collection.distinct('productCategory'),
+    collection.distinct('paymentMethod'),
+    collection.distinct('tags'),
+    collection.aggregate([
+      { $group: { _id: null, minAge: { $min: '$age' }, maxAge: { $max: '$age' } } }
+    ]).toArray()
+  ]);
+  
   return {
-    regions: Array.from(regions).sort(),
-    genders: Array.from(genders).sort(),
-    categories: Array.from(categories).sort(),
-    paymentMethods: Array.from(paymentMethods).sort(),
-    tags: Array.from(tags).sort(),
+    regions: regions.filter(Boolean).sort(),
+    genders: genders.filter(Boolean).sort(),
+    categories: categories.filter(Boolean).sort(),
+    paymentMethods: paymentMethods.filter(Boolean).sort(),
+    tags: tags.flat().filter(Boolean).sort(),
     ageRange: {
-      min: minAge === Infinity ? 0 : minAge,
-      max: maxAge === -Infinity ? 100 : maxAge
+      min: ageRange[0]?.minAge || 0,
+      max: ageRange[0]?.maxAge || 100
     }
   };
 };

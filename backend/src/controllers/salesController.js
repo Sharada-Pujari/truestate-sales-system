@@ -1,8 +1,8 @@
 import { searchAndFilterSales, getFilterOptions } from '../services/salesService.js';
 
-export const getSales = (req, res) => {
+export const getSales = async (req, res) => {
   try {
-    const result = searchAndFilterSales(req.query);
+    const result = await searchAndFilterSales(req.query);
     res.json(result);
   } catch (error) {
     console.error('Error fetching sales:', error);
@@ -10,9 +10,9 @@ export const getSales = (req, res) => {
   }
 };
 
-export const getFilters = (req, res) => {
+export const getFilters = async (req, res) => {
   try {
-    const options = getFilterOptions();
+    const options = await getFilterOptions();
     res.json(options);
   } catch (error) {
     console.error('Error fetching filters:', error);
